@@ -2,6 +2,8 @@
 
 Creative coding / web experiment.
 
+Classic Diffusion Reaction
+
 ## Run
 
 Open `index.html` in a browser.

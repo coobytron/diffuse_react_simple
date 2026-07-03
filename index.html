@@ -1,0 +1,346 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Reaction-Diffusion Simulation</title>
+    <style>
+        :root {
+            --font:   -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, Helvetica, Arial, sans-serif;
+            --bg:     #f6f4ef;
+            --ink:    #111111;
+            --muted:  #6e6a64;
+            --panel:  rgba(255,255,255,.74);
+            --line:   rgba(0,0,0,.12);
+            --accent: #ff4f1f;
+            --blue:   #0a84ff;
+            --shadow: 0 18px 60px rgba(0,0,0,.12);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: var(--font);
+            color: var(--ink);
+            background: var(--bg);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        canvas {
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            cursor: crosshair;
+            background: var(--bg);
+            display: block;
+        }
+
+        .controls {
+            background: var(--panel);
+            -webkit-backdrop-filter: blur(22px);
+            backdrop-filter: blur(22px);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+            padding: 20px 22px;
+            width: 100%;
+            max-width: 760px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 16px 20px;
+        }
+
+        .section-head {
+            width: 100%;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: .16em;
+            color: var(--muted);
+            padding-top: 4px;
+        }
+        .section-head + .section-head,
+        .divider {
+            border-top: 1px solid var(--line);
+            padding-top: 14px;
+            margin-top: 4px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        input, select {
+            font: 450 13px/1 var(--font);
+            color: var(--ink);
+            background: rgba(255,255,255,.74);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 7px 10px;
+            font-variant-numeric: tabular-nums;
+        }
+        input[type=number] { width: 96px; }
+        select { cursor: pointer; }
+
+        #preset-group, #palette-group { min-width: 180px; }
+
+        button {
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,.74);
+            color: var(--ink);
+            font: 650 12px/1 var(--font);
+            padding: 8px 14px;
+            cursor: pointer;
+            transition: all .15s ease;
+        }
+        button:hover {
+            transform: translateY(-1px);
+            background: #fff;
+        }
+        button.accent { background: var(--accent); color: #fff; border-color: transparent; }
+    </style>
+</head>
+<body>
+    <canvas id="rdCanvas" width="720" height="480"></canvas>
+
+    <div class="controls">
+        <div class="section-head">Pattern</div>
+        <div class="control-group" id="preset-group">
+            <label for="presets">Preset</label>
+            <select id="presets">
+                <option value="coral">Coral Growth</option>
+                <option value="solitons">Solitons</option>
+                <option value="mitosis">Mitosis</option>
+                <option value="pulsating">Pulsating Solitons</option>
+                <option value="worms">Worms</option>
+                <option value="mazes">Mazes</option>
+            </select>
+        </div>
+        <div class="control-group" id="palette-group">
+            <label for="palette">Palette</label>
+            <select id="palette">
+                <option value="solar">Solar</option>
+                <option value="ink">Ink</option>
+                <option value="ember">Ember</option>
+                <option value="tide">Tide</option>
+            </select>
+        </div>
+
+        <div class="section-head divider">Parameters</div>
+        <div class="control-group"><label for="seedSize">Seed Size</label><input id="seedSize" type="number" step="10" value="100" min="10" max="300"></div>
+        <div class="control-group"><label for="feed">Feed Rate (f)</label><input id="feed" type="number" step="0.001"></div>
+        <div class="control-group"><label for="kill">Kill Rate (k)</label><input id="kill" type="number" step="0.001"></div>
+        <div class="control-group"><label for="diffA">Diffusion A (dA)</label><input id="diffA" type="number" step="0.001" value="0.218"></div>
+        <div class="control-group"><label for="diffB">Diffusion B (dB)</label><input id="diffB" type="number" step="0.001" value="0.334"></div>
+        <div class="control-group"><label for="speed">Speed</label><input id="speed" type="number" step=".01" value="1" min=".5"></div>
+    </div>
+    <button id="resetBtn" class="accent">Reset Current</button>
+
+    <script>
+        const canvas = document.getElementById('rdCanvas');
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+
+        let grid, nextGrid;
+        let dA = 0.218;
+        let dB = .334;
+        let feed = 0.029;
+        let kill = 0.057;
+        let timeStep = 0.8;
+        let simulationStepsPerFrame = 1;
+        let palette = 'solar';
+
+        const presets = {
+            'coral':     { f: 0.055, k: 0.062 },
+            'solitons':  { f: 0.025, k: 0.050 },
+            'mitosis':   { f: 0.035, k: 0.065 },
+            'pulsating': { f: 0.045, k: 0.070 },
+            'worms':     { f: 0.078, k: 0.061 },
+            'mazes':     { f: 0.029, k: 0.057 },
+        };
+
+        // --- Shared palette definitions (see DESIGN_SYSTEM.md) ---
+        const BG   = [0xf6, 0xf4, 0xef];
+        const INK  = [0x11, 0x11, 0x11];
+        const ACC  = [0xff, 0x4f, 0x1f];
+        const BLUE = [0x0a, 0x84, 0xff];
+
+        function lerp(a, b, t) { return a + (b - a) * t; }
+        function lerp2(c0, c1, t) {
+            return [lerp(c0[0], c1[0], t), lerp(c0[1], c1[1], t), lerp(c0[2], c1[2], t)];
+        }
+        // three-stop lerp: bg -> mid -> ink
+        function lerp3(c0, cm, c1, t) {
+            if (t < 0.5) return lerp2(c0, cm, t * 2);
+            return lerp2(cm, c1, (t - 0.5) * 2);
+        }
+
+        function colorFor(t) {
+            switch (palette) {
+                case 'ink':
+                    return lerp2(BG, INK, t);
+                case 'ember':
+                    return lerp3(BG, ACC, INK, t);
+                case 'tide':
+                    return lerp3(BG, BLUE, INK, t);
+                case 'solar':
+                default:
+                    return [
+                        Math.sin(t * Math.PI * 2.5) * 127 + 128,
+                        Math.sin(t * Math.PI * 3.0) * 127 + 128,
+                        Math.sin(t * Math.PI * 3.5) * 127 + 128,
+                    ];
+            }
+        }
+
+        const feedInput = document.getElementById('feed');
+        const killInput = document.getElementById('kill');
+        const diffAInput = document.getElementById('diffA');
+        const diffBInput = document.getElementById('diffB');
+        const speedInput = document.getElementById('speed');
+        const seedInput = document.getElementById('seedSize');
+        const resetBtn = document.getElementById('resetBtn');
+        const presetsSelect = document.getElementById('presets');
+        const paletteSelect = document.getElementById('palette');
+
+        function setPreset(name) {
+            const preset = presets[name];
+            feed = preset.f;
+            kill = preset.k;
+            feedInput.value = feed;
+            killInput.value = kill;
+            presetsSelect.value = name;
+            setup();
+        }
+
+        function setup() {
+            grid = [];
+            nextGrid = [];
+            for (let x = 0; x < width; x++) {
+                grid[x] = [];
+                nextGrid[x] = [];
+                for (let y = 0; y < height; y++) {
+                    grid[x][y] = { a: 1, b: 0 };
+                    nextGrid[x][y] = { a: 1, b: 0 };
+                }
+            }
+
+            const seedSize = parseInt(seedInput.value);
+            const startX = Math.floor((width - seedSize) / 2);
+            const startY = Math.floor((height - seedSize) / 2);
+            for (let i = startX; i < startX + seedSize; i++) {
+                for (let j = startY; j < startY + seedSize; j++) {
+                    if (i >= 0 && i < width && j >= 0 && j < height) {
+                        grid[i][j].b = 1;
+                    }
+                }
+            }
+        }
+
+        function update() {
+            for (let x = 1; x < width - 1; x++) {
+                for (let y = 1; y < height - 1; y++) {
+                    let a = grid[x][y].a;
+                    let b = grid[x][y].b;
+
+                    let laplaceA = (grid[x+1][y].a + grid[x-1][y].a + grid[x][y+1].a + grid[x][y-1].a - 4 * a);
+                    let laplaceB = (grid[x+1][y].b + grid[x-1][y].b + grid[x][y+1].b + grid[x][y-1].b - 4 * b);
+
+                    let reaction = a * b * b;
+
+                    nextGrid[x][y].a = a + (dA * laplaceA - reaction + feed * (1 - a)) * timeStep;
+                    nextGrid[x][y].b = b + (dB * laplaceB + reaction - (kill + feed) * b) * timeStep;
+
+                    nextGrid[x][y].a = Math.max(0, Math.min(1, nextGrid[x][y].a));
+                    nextGrid[x][y].b = Math.max(0, Math.min(1, nextGrid[x][y].b));
+                }
+            }
+            let temp = grid; grid = nextGrid; nextGrid = temp;
+        }
+
+        function draw() {
+            let imageData = ctx.createImageData(width, height);
+            for (let x = 0; x < width; x++) {
+                for (let y = 0; y < height; y++) {
+                    let a = grid[x][y].a;
+                    let b = grid[x][y].b;
+                    // scalar field t = (a - b) mapped into 0..1
+                    let t = Math.max(0, Math.min(1, (a - b + 1) / 2));
+
+                    let rgb;
+                    if (palette === 'solar') {
+                        // Solar reproduces the original look exactly: use raw (a-b)
+                        let val = a - b;
+                        rgb = [
+                            Math.sin(val * Math.PI * 2.5) * 127 + 128,
+                            Math.sin(val * Math.PI * 3.0) * 127 + 128,
+                            Math.sin(val * Math.PI * 3.5) * 127 + 128,
+                        ];
+                    } else {
+                        rgb = colorFor(t);
+                    }
+
+                    let index = (y * width + x) * 4;
+                    imageData.data[index + 0] = rgb[0];
+                    imageData.data[index + 1] = rgb[1];
+                    imageData.data[index + 2] = rgb[2];
+                    imageData.data[index + 3] = 255;
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        let isMouseDown = false;
+        canvas.addEventListener('mousedown', () => isMouseDown = true);
+        canvas.addEventListener('mouseup', () => isMouseDown = false);
+        canvas.addEventListener('mousemove', (e) => {
+            if (isMouseDown) {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+                if (x > 0 && x < width && y > 0 && y < height) {
+                    const brushSize = 5;
+                     for (let i = -brushSize; i < brushSize; i++) {
+                         for (let j = -brushSize; j < brushSize; j++) {
+                             if(grid[Math.floor(x+i)] && grid[Math.floor(x+i)][Math.floor(y+j)])
+                                grid[Math.floor(x+i)][Math.floor(y+j)].b = 1;
+                         }
+                     }
+                }
+            }
+        });
+
+        feedInput.addEventListener('change', () => feed = parseFloat(feedInput.value));
+        killInput.addEventListener('change', () => kill = parseFloat(killInput.value));
+        diffAInput.addEventListener('change', () => dA = parseFloat(diffAInput.value));
+        diffBInput.addEventListener('change', () => dB = parseFloat(diffBInput.value));
+        speedInput.addEventListener('change', () => simulationStepsPerFrame = parseInt(speedInput.value));
+        seedInput.addEventListener('change', setup); // Reset simulation when seed size changes
+        resetBtn.addEventListener('click', setup);
+        presetsSelect.addEventListener('change', (e) => setPreset(e.target.value));
+        paletteSelect.addEventListener('change', (e) => palette = e.target.value);
+
+        function animate() {
+            for (let i = 0; i < simulationStepsPerFrame; i++) { update(); }
+            draw();
+            requestAnimationFrame(animate);
+        }
+
+        setPreset('coral');
+        animate();
+    </script>
+</body>
+</html>
